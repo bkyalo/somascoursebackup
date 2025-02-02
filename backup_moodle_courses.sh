@@ -1,18 +1,19 @@
 #!/bin/bash
 
 # =============================================================================
-# Moodle Course Backup Script
+# Moodle Course Backup Script (Using Course Short Names)
 # =============================================================================
 # This script backs up specified Moodle courses by iterating through predefined
-# course IDs. It generates logs for monitoring and troubleshooting, and it uses
-# separate variables for Moodle root directory, MySQL credentials, and course IDs
-# for better security, maintainability, and flexibility.
+# course short names. For each short name, it queries the Moodle database to get
+# the course ID and then performs the backup. It generates logs for monitoring
+# and troubleshooting.
 #
 # =============================================================================
 # Usage:
-#   ./backup_moodle_courses.sh [course_ids_file]
-#   - If a course IDs file is provided as an argument, the script will load course
-#     IDs from that file. Otherwise, it will use course IDs defined within the script.
+#   ./backup_moodle_courses.sh [course_shortnames_file]
+#   - If a course short names file is provided as an argument, the script will load
+#     course short names from that file (one short name per line). Otherwise, it will
+#     use course short names defined within the script.
 #
 # =============================================================================
 
@@ -21,13 +22,13 @@
 # ---------------------------
 
 # **Moodle Root Directory**
-MOODLE_ROOT="/path/to/moodle"
+MOODLE_ROOT="/var/www/html/oukv2"
 
 # **MySQL Credentials**
 DB_HOST="localhost"                  # MySQL host
-DB_USER="Username"                    # MySQL username
-DB_PASS="Password"                  # MySQL password
-DB_NAME="Database name"                    # MySQL database name
+DB_USER="lmsuser"                    # MySQL username
+DB_PASS="Lms@2050#"                  # MySQL password
+DB_NAME="ouk_mdl"                    # MySQL database name
 
 # **Backup Destination Directory**
 DESTINATION_DIR="$HOME/backup"
@@ -38,15 +39,15 @@ LOG_FILE="$DESTINATION_DIR/backup_$(date +'%Y%m%d').log"
 # **Date Format for Logs**
 DATE_FORMAT="+%Y-%m-%d %H:%M:%S"
 
-# **Course IDs Configuration**
-# You can define course IDs directly in the script or provide a file containing course IDs.
-# To use a file, pass the filename as the first argument when running the script.
-
-# Example of defining course IDs directly:
-# COURSE_IDS=(925 926 927 928)
-
-# Alternatively, to load course IDs from an external file:
-# Ensure the file contains one course ID per line.
+# **Course Short Names Configuration**
+# You can define course short names directly in the script or provide a file containing
+# course short names (one per line).
+#
+# Example of defining course short names directly:
+# COURSE_SHORTNAMES=("course_short1" "course_short2" "course_short3")
+#
+# Alternatively, to load course short names from an external file, pass the filename
+# as the first argument when running the script.
 
 # ---------------------------
 # Function Definitions
@@ -71,16 +72,25 @@ check_success() {
     fi
 }
 
-# **Function to Load Course IDs**
-load_course_ids() {
-    local COURSE_IDS_FILE="$1"
-    if [ -f "$COURSE_IDS_FILE" ]; then
-        mapfile -t COURSE_IDS < "$COURSE_IDS_FILE"
-        log_message "Loaded course IDs from file: $COURSE_IDS_FILE"
+# **Function to Load Course Short Names**
+load_course_shortnames() {
+    local COURSE_FILE="$1"
+    if [ -f "$COURSE_FILE" ]; then
+        mapfile -t COURSE_SHORTNAMES < "$COURSE_FILE"
+        log_message "Loaded course short names from file: $COURSE_FILE"
     else
-        log_message "ERROR: Course IDs file '$COURSE_IDS_FILE' not found."
+        log_message "ERROR: Course short names file '$COURSE_FILE' not found."
         exit 1
     fi
+}
+
+# **Function to Query Course ID by Short Name**
+get_course_id() {
+    local SHORTNAME="$1"
+    # Query the Moodle database for the course id based on shortname.
+    local COURSE_ID
+    COURSE_ID=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -se "SELECT id FROM mdl_course WHERE shortname = '$SHORTNAME' LIMIT 1;")
+    echo "$COURSE_ID"
 }
 
 # ---------------------------
@@ -92,45 +102,46 @@ mkdir -p "$DESTINATION_DIR"
 touch "$LOG_FILE"
 log_message "========== Moodle Course Backup Started =========="
 
-# **Determine Source of Course IDs**
+# **Determine Source of Course Short Names**
 if [ "$#" -ge 1 ]; then
-    # If a course IDs file is provided as an argument
-    COURSE_IDS_FILE="$1"
-    load_course_ids "$COURSE_IDS_FILE"
+    # If a course short names file is provided as an argument
+    COURSE_FILE="$1"
+    load_course_shortnames "$COURSE_FILE"
 else
-    # Define course IDs directly within the script
-    # Uncomment and modify the following line as needed
-    COURSE_IDS=(925 926 927 928)  # Replace with your actual course IDs
-    log_message "Using predefined course IDs: ${COURSE_IDS[*]}"
+    # Define course short names directly within the script
+    COURSE_SHORTNAMES=("PLA 711" "BEB 102" "DSC201")  # Replace with your actual course short names
+    log_message "Using predefined course short names: ${COURSE_SHORTNAMES[*]}"
 fi
 
-# **Alternative: Fetch Course IDs from Database (Commented Out)**
-# If you prefer to fetch course IDs from the database, uncomment the following block
-# and comment out the direct definition or file loading above.
-
-# log_message "Fetching course IDs from the database..."
-# COURSE_IDS=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -se "SELECT id FROM mdl_course WHERE id > 924;")
-# check_success $? "Successfully fetched course IDs." "Failed to fetch course IDs from the database."
-
-# **Check if Course IDs are Retrieved**
-if [ "${#COURSE_IDS[@]}" -eq 0 ]; then
-    log_message "No course IDs found to back up. Exiting."
+# **Check if Course Short Names are Retrieved**
+if [ "${#COURSE_SHORTNAMES[@]}" -eq 0 ]; then
+    log_message "No course short names found to process. Exiting."
     exit 0
 fi
 
-# **Loop Through Each Course ID and Perform Backup**
-for ID in "${COURSE_IDS[@]}"; do
-    log_message "Starting backup for course ID: $ID"
+# **Loop Through Each Course Short Name, Query for Course ID, and Perform Backup**
+for SHORTNAME in "${COURSE_SHORTNAMES[@]}"; do
+    log_message "Processing course short name: $SHORTNAME"
+    
+    # Get the course ID from the database based on short name
+    COURSE_ID=$(get_course_id "$SHORTNAME")
+    
+    if [ -z "$COURSE_ID" ]; then
+        log_message "ERROR: No course found with short name: $SHORTNAME"
+        continue
+    fi
+    
+    log_message "Found course ID: $COURSE_ID for short name: $SHORTNAME"
     
     # Execute the backup command and capture output and errors
-    php "$MOODLE_ROOT/admin/cli/backup.php" --courseid="$ID" --destination="$DESTINATION_DIR" >> "$LOG_FILE" 2>&1
+    php "$MOODLE_ROOT/admin/cli/backup.php" --courseid="$COURSE_ID" --destination="$DESTINATION_DIR" --users=0 >> "$LOG_FILE" 2>&1
     EXIT_CODE=$?
     
     # Check if backup was successful
     if [ "$EXIT_CODE" -eq 0 ]; then
-        log_message "Successfully backed up course ID: $ID"
+        log_message "Successfully backed up course '$SHORTNAME' (ID: $COURSE_ID)"
     else
-        log_message "ERROR: Failed to back up course ID: $ID"
+        log_message "ERROR: Failed to back up course '$SHORTNAME' (ID: $COURSE_ID)"
         # Optionally, you can choose to exit or continue based on your requirements
         # exit "$EXIT_CODE"
     fi
